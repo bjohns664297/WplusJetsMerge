@@ -1,0 +1,110 @@
+! VjetsPythia8.cmnd.
+! This file contains commands to be read in for a Pythia8 run.
+! Lines not beginning with a letter or digit are comments.
+! Names are case-insensitive  -  but spellings-sensitive!
+!
+! For details on each of these options, look at the online manual: http://home.thep.lu.se/~torbjorn/pythia83html/
+
+
+
+! 1) Alternative beam and process selection from a Les Houches Event File.
+!    ---------------------------------------------------------------------
+
+Beams:frameType = 4                     ! Read info from a LHEF
+Main:numberOfSubruns = 4                ! Number of LHE files to be used as input. If more than 1, merging must be applied
+
+Beams:LHEF = w_production_tree_0.lhe    ! This file will be overwritten by what follow in section 3) below. It is only used to initialize the merging below
+
+
+
+! 2) Merging Procedure
+!    -----------------
+
+!    Handle the merging
+!    ..................
+!
+!     NOTE 1: There are many different merging procedures that can be adopted (e.g. CKKW-L, MLM, UMEPS), and each can be defined with different settings
+!
+!     NOTE 2: We will not automatically include the merging weight in the event weight to avoid confusion, so it will be important to multiply both weights
+!             in the code where tree or histogram variables are filled, as well as in the HepMC files.
+
+Merging:doMerging = on
+Merging:includeWeightInXsection = on
+
+
+!      i) CKKW-L Merging using Durham KT-Separation
+
+Merging:doKTMerging = on               ! Enable the merging procedure, with the merging scale defined as kT-separation of jets in the kT-algorithm.  BSJ: OFF ORIGINALLY
+Merging:ktType      = 2                ! Precise functional definition of longitudinally invariant Durham kT (1: DR using rapditity. 2: DR using pseudorapidity. 3: cosh(delta eta) -cos(delta phi) 
+Merging:TMS = 25.                      ! Specify the merging scale. It should be equal to the PT-cut scale used in the generator producing the LHE files
+Merging:nJetMax = 3                    ! Specify the maximum number of ADDITIONAL LO jets available from Matrix-Element calculations
+Merging:Process = pp>e+ve              ! Specify the hard process used as the starting point of the merging used to yield the "first" LHE file
+Merging:Dparameter = 1.0               ! The value of the D parameter needed in the definition of longitudinally invariant kT separation
+
+
+!     ii) CKKW-L Merging using Pythia-evolution pT
+
+Merging:doPTLundMerging = off            ! The merging scale is defined by finding the minimal Pythia evolution pT between sets of radiator, emitted and recoiler partons.  BSJ: ON ORIGINALLY
+#Merging:TMS = 30.                      ! Specify the merging scale. It should be equal to the PT-cut scale used in the generator producing the LHE files
+#Merging:nJetMax = 2                    ! Specify the maximum number of ADDITIONAL LO jets available from Matrix-Element calculations
+#Merging:Process = pp>e+ve              ! Specify the hard process used as the starting point of the merging used to yield the "first" LHE file
+#Merging:Process  = pp>LEPTONS,NEUTRINOS
+#Merging:nJetMax  = 2
+#Merging:TMS      = 25
+
+
+!   iii) CKKW-L Merging using Cut Combinations
+
+Merging:doCutBasedMerging = off         ! This switch will use cuts on pTi, ΔRij and Qij to define when parton shower emissions are allowed. Note: b-quarks are not checked for overlap with this.  BSJ: OFF ORIGINALLY
+#Merging:QijMS = 1.0                    ! The value of the invariant mass cut Qij of pairs of final state partons used in the matrix element generation 
+#Merging:pTiMS = 20.0                   ! The value of the minimal transverse momentum cut pTi on final state partons, as used in the matrix element generation
+#Merging:dRijMS = 0.1                   ! The value of the minimal ΔRij (using rapidity) separation between pairs of final state partons used in the matrix element generation
+#Merging:nJetMax = 2                    ! Specify the maximum number of ADDITIONAL LO jets available from Matrix-Element calculations
+#Merging:Process = LEPTONS,NEUTRINOS    ! Specify the hard process used as the starting point of the merging used to yield the "first" LHE file
+
+
+
+! 3) Specify the LHE files to be used as input in the various subruns
+!    ----------------------------------------------------------------
+!
+!    NOTE 1: The reading of the nth LHE file matches readFile( ..., n)
+!
+!    NOTE 2: No reinitialization is needed/wanted after reading the first LHE file
+
+
+!    Information specific to the first LHE file
+!    ..........................................
+
+Main:subrun = 0                         
+#Beams:newLHEFsameInit = on         
+Merging:nRequested = 0
+Beams:LHEF = LHEFiles/Wjets/weveDurham_01.lhe
+
+
+!    Information specific to the second LHE file
+!    ...........................................
+
+Main:subrun = 1            
+#Beams:newLHEFsameInit = on         
+Merging:nRequested = 1
+Beams:LHEF = LHEFiles/Wjets/wjeveDurham_01.lhe
+
+
+
+!    Information specific to the third LHE file
+!    ..........................................
+
+Main:subrun = 2
+#Beams:newLHEFsameInit = on
+Merging:nRequested = 2
+Beams:LHEF = LHEFiles/Wjets/wjjeveDurham_01.lhe
+
+
+
+!    Information specific to the fourth LHE file
+!    ..........................................
+
+Main:subrun = 3
+#Beams:newLHEFsameInit = on
+Merging:nRequested = 3
+Beams:LHEF = LHEFiles/Wjets/wjjjeveDurham_01.lhe
