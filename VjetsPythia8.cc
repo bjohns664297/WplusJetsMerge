@@ -1,7 +1,7 @@
 //&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&
-// File: VjetsPythia8_main
+// File: VjetsPythia8
 //
-// Purpose:  This is the main code for generating events with pythia 8, as well as
+// Purpose:  This is the main code for generating events with Pythia 8, as well as
 //           storing relevant output variables in Root Trees and histograms. Jets are
 //           reconstructed with FastJet. The goal is to produce datasets with all the
 //           relevant variables for doing theoretical predictions and sensitivity
@@ -1424,6 +1424,12 @@ int main(int argc, char* argv[])
   pythia.readFile("VjetsPythia8_PhysicsParameters.cmnd");
   
   pythia.readFile(argv[1]);
+
+  // BSJ: MLM vv
+  // Create UserHooks pointer. Stop if it failed. Pass pointer to Pythia.
+  CombineMatchingInput combined;
+  combined.setHook(pythia);
+  // BSJ: MLM ^^
   
      // Initialize Pythia
      // .................
@@ -1450,11 +1456,20 @@ int main(int argc, char* argv[])
      // .................................. 
 
   bool doCKKWMerging = false;
+  bool doUMEPSMerging = false;
+  bool doMLMMatching = false;
+  
 
   if ( pythia.flag("Merging:doKTMerging") || pythia.flag("Merging:doPTLundMerging") || pythia.flag("Merging:doCutBasedMerging") ) doCKKWMerging = true;
    
-  
-  
+  // BSJ: MLM vv
+  if ( pythia.flag("JetMatching:merge") ) doMLMMatching = true;
+  // BSJ: MLM ^^
+
+  // BSJ: UMEPS vv
+  if ( pythia.flag("Merging:doUMEPSTree") ) doUMEPSMerging = true;
+  // BSJ: UMEPS ^^
+
   // Setup Pythia output storage in a HepMC file 
   // -------------------------------------------
   
@@ -1473,12 +1488,13 @@ int main(int argc, char* argv[])
         //       Pythia's parton shower, we need to provide the cross section and event weight
         //       by hand, so we need to switch it off for normal conversion routine.
 
-  if (doCKKWMerging)
+  if ( (doCKKWMerging) || (doMLMMatching) || (doUMEPSMerging) )
     {
       ToHepMC.set_store_pdf(false);
       ToHepMC.set_store_proc(false);
       ToHepMC.set_store_xsec(false);
     }
+
   
      // Specify file where HepMC events will be stored
      // ..............................................
@@ -1593,7 +1609,13 @@ int main(int argc, char* argv[])
   if (isLHEinput) nbin_normxsec = nLHEfiles;
   TH1D *normxsec   = new TH1D("normXsec","Sample Normalization Xsect", nbin_normxsec, 0, nbin_normxsec);
 
-
+  // BSJ: UMEPS vv
+  // Histograms combined over all jet multiplicities.
+  int nBins = 100;
+  double xMin = 0., xMax = 200.;
+  Hist pTWsum("pT of W, summed over all subruns", nBins, xMin, xMax);
+  double binWidth = (xMax-xMin)/nBins;
+  // BSJ: UMEPS ^^
   
   
   ///===========================================================================
@@ -1622,150 +1644,155 @@ int main(int argc, char* argv[])
   // Pre-calculate cross section only if LHE files are used with merging procedure
   // -----------------------------------------------------------------------------
 
+
   if ( isLHEinput && doCKKWMerging )
     {
       std::cout << "Approximate total cross section for HepMC file normalization when merging is performed" << std::endl;
 
 
+      if (doCKKWMerging)
+        {
+          // Verify that the number of files to merge corresponds to the number of input LHE files
+          // -------------------------------------------------------------------------------------    
+
+          // Note: This implies that if we are merging, we must start with the 0-extra jets process. If
+          //       one wants to start with say 1 extra hard jets, and merge to 2, 3, etc, without including
+          //       the 0-jet case, the condition below would have to be commented out. Note that this would
+          //       mean that the 1st hard jet would not be resummed properly, and would likely involve a
+          //       larger merging scale dependence.
       
-      // Verify that the number of files to merge corresponds to the number of input LHE files
-      // -------------------------------------------------------------------------------------    
+          int nHardJet = pythia.mode("Merging:nJetMax");
 
-      // Note: This implies that if we are merging, we must start with the 0-extra jets process. If
-      //       one wants to start with say 1 extra hard jets, and merge to 2, 3, etc, without including
-      //       the 0-jet case, the condition below would have to be commented out. Note that this would
-      //       mean that the 1st hard jet would not be resummed properly, and would likeli involve a
-      //       larger merging scale dependence.
-      
-      int nHardJet = pythia.mode("Merging:nJetMax");
-
-      if (nHardJet != (nLHEfiles-1))
-	      {
-	        std::cout << "The number of files to be merged does not match the number of input files -- abort --" << std::endl;
-	        return 0.;
-	      }
-
-      
-      // Estimate the cross section
-      // --------------------------    
-
-      // Note: Histograms and HepMC files must not only be normalized to the cross section
-      //       for each generated processes (one per LHE file), but also to the ratio of
-      //       events kept after the merging over the number of event generated in the LHE files.
-      
-      int njetCounterEstimate = nHardJet ;
-
-
-      // Switch on cross section estimation procedure
-      // ............................................
-
-         // Note: This prevent from applying merging weight to the calculated cross section, but to only account for the
-         //       change in phase space when merging regularization cuts are applied
-      
-      pythia.settings.flag("Merging:doXSectionEstimate", true);
-
-     
-      // Switch off parton shower, hadronization and MPI
-      // ...............................................	  
-
-	    // Note: Parton shower, hadronization and MPI slow down the calculation process but do not impact the calculation
-	  
-      bool fsr = pythia.flag("PartonLevel:FSR");
-      bool isr = pythia.flag("PartonLevel:ISR");
-      bool mpi = pythia.flag("PartonLevel:MPI");
-      bool had = pythia.flag("HadronLevel:all");
-      pythia.settings.flag("PartonLevel:FSR",false);
-      pythia.settings.flag("PartonLevel:ISR",false);
-      pythia.settings.flag("HadronLevel:all",false);
-      pythia.settings.flag("PartonLevel:MPI",false);
-
-
-     // Loop over all the LHE files
-     // ........................... 
-
-      while(njetCounterEstimate >= 0)
-	      {
-
-
-          // Read in ME configurations for each subrun and make sure there are enough subruns  
-          // ................................................................................
-
-	        pythia.readFile(argv[1], njetCounterEstimate);
-	        pythia.init();
-	    
-	        if (pythia.mode("Main:subrun") != njetCounterEstimate)
+          if (nHardJet != (nLHEfiles-1))
 	          {
-	            std::cout << "Mismatch between the subruns initialized and the expected number of subruns -- abort --" << std::endl;
+	            std::cout << "The number of files to be merged does not match the number of input files -- abort --" << std::endl;
 	            return 0.;
 	          }
 
-	    
-          // Generate event loop
-          //	...................
+      
+          // Estimate the cross section
+          // --------------------------    
 
-	        int nXsectEvntEst = 10000;
-
-	        for( int iEvent=0; iEvent<nXsectEvntEst; ++iEvent )
-	          {
-	            if( !pythia.next() )
-		            {
-		              if( pythia.info.atEndOfFile() )
-		                {
-		                  break;
-		                }
-		              else continue;
-		            }
-	          } // end loop over events to generate
+          // Note: Histograms and HepMC files must not only be normalized to the cross section
+          //       for each generated processes (one per LHE file), but also to the ratio of
+          //       events kept after the merging over the number of event generated in the LHE files.
+      
+          int njetCounterEstimate = nHardJet ;
 
 
+          // Switch on cross section estimation procedure
+          // ............................................
 
-          // Store calculated cross section, number of accepted and number of tried events in vectors
-          //	........................................................................................
-	    
-	        xsecLO.push_back(pythia.info.sigmaGen());
-	        nSelectedLO.push_back(pythia.info.nSelected());
-	        nAcceptLO.push_back(pythia.info.nAccepted());
-	        strategyLO.push_back(pythia.info.lhaStrategy());
+          // Note: This prevent from applying merging weight to the calculated cross section, but to only account for the
+          //       change in phase space when merging regularization cuts are applied
+      
+          pythia.settings.flag("Merging:doXSectionEstimate", true);
 
-    
-          // Update counter on the number of file to merge
-          // .............................................
-    
-	        if( njetCounterEstimate > 0 )
-	          njetCounterEstimate--;
-	        else
-	          break;
+     
+          // Switch off parton shower, hadronization and MPI
+          // ...............................................	  
+
+	        // Note: Parton shower, hadronization and MPI slow down the calculation process but do not impact the calculation
 	  
-	      } // end loop over different jet multiplicities
+          bool fsr = pythia.flag("PartonLevel:FSR");
+          bool isr = pythia.flag("PartonLevel:ISR");
+          bool mpi = pythia.flag("PartonLevel:MPI");
+          bool had = pythia.flag("HadronLevel:all");
+          pythia.settings.flag("PartonLevel:FSR",false);
+          pythia.settings.flag("PartonLevel:ISR",false);
+          pythia.settings.flag("HadronLevel:all",false);
+          pythia.settings.flag("PartonLevel:MPI",false);
+
+
+          // Loop over all the LHE files
+          // ........................... 
+
+          while(njetCounterEstimate >= 0)
+	          {
+
+
+              // Read in ME configurations for each subrun and make sure there are enough subruns  
+              // ................................................................................
+
+	            pythia.readFile(argv[1], njetCounterEstimate);
+	            pythia.init();
+	    
+	            if (pythia.mode("Main:subrun") != njetCounterEstimate)
+	              {
+	                std::cout << "Mismatch between the subruns initialized and the expected number of subruns -- abort --" << std::endl;
+	                return 0.;
+	              }
+
+	    
+              // Generate event loop
+              //	...................
+
+	            int nXsectEvntEst = 10000;
+
+	            for( int iEvent=0; iEvent<nXsectEvntEst; ++iEvent )
+	              {
+	                if( !pythia.next() )
+		                {
+		                  if( pythia.info.atEndOfFile() )
+		                    {
+		                      break;
+		                    }
+		                  else continue;
+		                }
+	              } // end loop over events to generate
 
 
 
-     // Restore normal generation settings
-     // ..................................
+              // Store calculated cross section, number of accepted and number of tried events in vectors
+              //	........................................................................................
+	    
+	            xsecLO.push_back(pythia.info.sigmaGen());
+	            nSelectedLO.push_back(pythia.info.nSelected());
+	            nAcceptLO.push_back(pythia.info.nAccepted());
+	            strategyLO.push_back(pythia.info.lhaStrategy());
+
+    
+              // Update counter on the number of file to merge
+              // .............................................
+    
+	            if( njetCounterEstimate > 0 )
+	              njetCounterEstimate--;
+	            else
+	              break;
+	  
+	          } // end loop over different jet multiplicities
+        
+
       
-      pythia.settings.flag("Merging:doXSectionEstimate", false);
 
-      pythia.settings.flag("PartonLevel:FSR",fsr);
-      pythia.settings.flag("PartonLevel:ISR",isr);
-      pythia.settings.flag("HadronLevel:all",had);
-      pythia.settings.flag("PartonLevel:MPI",mpi);
+          // Restore normal generation settings
+          // ..................................
+      
+          pythia.settings.flag("Merging:doXSectionEstimate", false);
+
+          pythia.settings.flag("PartonLevel:FSR",fsr);
+          pythia.settings.flag("PartonLevel:ISR",isr);
+          pythia.settings.flag("HadronLevel:all",had);
+          pythia.settings.flag("PartonLevel:MPI",mpi);
 
 
 
       
-      // Print cross section and normalization factor for each LHE file
-      // --------------------------------------------------------------
+          // Print cross section and normalization factor for each LHE file
+          // --------------------------------------------------------------
 
       
-      std::cout <<  " -- Finished estimating cross section -- " << std::endl;
+          std::cout <<  " -- Finished estimating cross section -- " << std::endl;
       
-      for(int i=0; i < int(xsecLO.size()); ++i)
-	      std::cout << "  Cross section estimate for " << nHardJet-i << " jets : "<< xsecLO[i] << std::endl;
+          for(int i=0; i < int(xsecLO.size()); ++i)
+	          std::cout << "  Cross section estimate for " << nHardJet-i << " jets : "<< xsecLO[i] << std::endl;
       
-      for(int i=0; i < int(nSelectedLO.size()); ++i)
-	      std::cout << "  Trial events for " << nHardJet-i << " jets :" << nSelectedLO[i] << "  Accepted events for " << nHardJet-i << " jets : " << nAcceptLO[i] << std::endl;
+          for(int i=0; i < int(nSelectedLO.size()); ++i)
+	          std::cout << "  Trial events for " << nHardJet-i << " jets :" << nSelectedLO[i] << "  Accepted events for " << nHardJet-i << " jets : " << nAcceptLO[i] << std::endl;
       
-    } // End if do Merging
+        } // End if do CKKW Merging
+
+      } // End if do Merging
   
 
 
@@ -1783,7 +1810,7 @@ int main(int argc, char* argv[])
   
   int njetCounter;
   
-  if (isLHEinput && doCKKWMerging)
+  if ( isLHEinput && ( doCKKWMerging || doUMEPSMerging ) )
     {
       int nHardJet = pythia.mode("Merging:nJetMax");
       njetCounter = nHardJet ;
@@ -1800,7 +1827,12 @@ int main(int argc, char* argv[])
   
   double sigmaTotal  = 0.;
   double errorTotal  = 0.;
-  
+
+  // BSJ: UMEPS vv
+  vector<double> sigmaExcTree, sigmaExcLoop;
+  vector<double> sigmaExcTreeSubt, sigmaExcLoopSubt;
+  // BSJ: UMEPS ^^
+
   int sizeLO    = int(xsecLO.size());
   
   
@@ -1859,212 +1891,446 @@ int main(int argc, char* argv[])
 	        if( abs(strategyLO[iNow]) == 4)   normhepmc = 1. / (1e9*nSelectedLO[iNow]);
 	      }
       
+      // BSJ: UMEPS vv  
 
-      
-      // Generate event loop
-      //	...................
+      // Get the inclusive cross section of this sample.
+      double sigmaInc = 0.;
+      for (int i = 0; i < pythia.info.nProcessesLHEF(); ++i)
+        sigmaInc += pythia.info.sigmaLHEF(i)/MB2PB;
 
-      for (int iEvent = 0; iEvent < nEvent; ++iEvent)
-	      {
-	        if (!pythia.next())
-	          {
-	            if (!(isLHEinput)) continue;
-	            else
-		            {
-		              if( pythia.info.atEndOfFile() )
+
+      // Histograms for current jet multiplicity.
+      Hist pTWnow("pT of W, current subrun", 100, 0., 200.);
+
+      // Exclusive cross section of this multiplicity.
+      double sigmaNow = 0., errorNow = 0.;   
+
+      // BSJ: UMEPS ^^  
+        
+
+      // BSJ: MLM vv
+
+      std::vector<double> EvtWeights;
+	    bool nullweight = false;
+
+      if (doMLMMatching)
+        {
+          // Begin event loop. Optionally quit it before end of file.
+          int iAbort = 0;
+          int nAbort = pythia.mode("Main:timesAllowErrors");
+          for (int iEvent = 0; ;  ++iEvent) 
+            {
+              if (nEvent > 0 && iEvent >= nEvent) break;
+
+              // Generate events. Quit if at end of file or many failures.
+              if (!pythia.next()) 
+                {
+                  if (pythia.info.atEndOfFile()) 
+                    {
+                      cout << "Info: end of input file reached" << endl;
+                      break;
+                    }
+                  if (++iAbort < nAbort) continue;
+                  cout << "Abort: too many errors in generation" << endl;
+                  break;
+                }
+  
+              // Fill Weight Vector and Calculate Sum-of-Weight
+              // ..............................................
+
+	  
+	            for (int iWeight = 0; iWeight < numOfWeights; ++iWeight)
+	              {
+	      
+  	              // Get weight
+  	              // .  .  .  .
+
+	                double w = (pythia.info.weight(iWeight));
+	                //w *=MergeWeight;
+	  
+  	              // Print a warning if a weight is negative or very large
+  	              // .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .
+	  
+	                if (w<0. || w>10.)
 		                {
-		                  break;
+		                  std::cout << "Negative or very large weight for variation: " << names[iWeight] << std::endl;
 		                }
-		              else continue;
-		            }
-	          }
 	  
-	  
-          // Display some event info
-          // .......................
+	                // Skip the event if the weight is zero
+	                // .  .  .  .  .  .  .  .  .  .  .  .
 
-	        if (iEvent < nListEvts)
-	          {
-	            //pythia.event.list();
-	            //partonLevelEvent.list();
-	          }
-	  
-
-	  
-          // Check current jet multiplicity
-          // ..............................
-
-	        int i_HardJet = -999;
-	  
-	        if (doCKKWMerging) i_HardJet = pythia.mode("Main:subrun");
-
-
-
-
-          // Calculate Weights and Sum-of-Weights
-          // ------------------------------------
-      
-          // Get the Merging Weights
-          // .......................
-
-          // Note: A merged calcula-tion is only a sophisticated reweighting procedure, which will
-          //       add effects of Sudakov resummation, and momentum-scale running of a_s and parton
-          //       distributions, to the ME calculation. This means that each event, after the merging
-          //       procedure, comes with a multiplicative weight to include these effects. These weights
-          //       should be used to reweight the events in an histogram (y-axis), and/or must be added
-          //       as a variable in a TTree in order to later reweight the histograms properly. They
-          //       must finally be also accounted for in cross section calculations.
-
-      
-	        double MergeWeight = 1.;
-	        double NLOMergeWeight = 1.;
-
-	        MergeWeight = pythia.info.mergingWeight();
-	        NLOMergeWeight = pythia.info.mergingWeightNLO();
-
-
-
-      
-          // Fill Weight Vector and Calculate Sum-of-Weight
-          // ..............................................
-
-          // Note: The Event Weight must be multiplied by the Merge Weight
-
-	        std::vector<double> EvtWeights;
-	        bool nullweight = false;
-	  
-	        for (int iWeight = 0; iWeight < numOfWeights; ++iWeight)
-	          {
+	                // Note: While large and/or negative weights sum up to a meaningful value, null weights will actually kill
+	                //       kill the event when weights are applied to histogram, and they create divergences in HepMC, so we
+	                //       remove them here.
 	      
-  	          // Get weight
-  	          // .  .  .  .
-
-	            double w = (pythia.info.weight(iWeight));
-	            w *=MergeWeight;
-
-	  
-  	          // Print a warning if a weight is negative or very large
-  	          // .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .
-	  
-	            if (w<0. || w>10.)
-		            {
-		              std::cout << "Negative or very large weight for variation: " << names[iWeight] << std::endl;
-		            }
-	  
-	            // Skip the event if the weight is zero
-	            // .  .  .  .  .  .  .  .  .  .  .  .
-
-	            // Note: While large and/or negative weights sum up to a meaningful value, null weights will actually kill
-	            //       kill the event when weights are applied to histogram, and they create divergences in HepMC, so we
-	            //       remove them here.
-	      
-	            if (w==0.) nullweight = true;
+	                if (w==0.) nullweight = true;
 
 	      
-  	          // Add the weight of the current event to the Sum-of-Weights
-  	          // .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  
+  	              // Add the weight of the current event to the Sum-of-Weights
+  	              // .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  
 
-	            // Note: In contrary to the cross section and the order at which they events are generated,
-	            //       the sumOfWeights vector has the baseline weight for the lowest jet multiplicty in
-	            //       the bin 0, and in last systematic weight for the highest jet multiplicity in the
-	            //       last bin of the vector. The main point is that on an event-by-event basis, weights
-	            //       are stored in a tree, and so is the hard parton multiplicity for each event, but
-	            //       histograms, to be normalized from tree, will only be filled in the reader.
+	                // Note: In contrary to the cross section and the order at which the events are generated,
+	                //       the sumOfWeights vector has the baseline weight for the lowest jet multiplicty in
+	                //       the bin 0, and in last systematic weight for the highest jet multiplicity in the
+	                //       last bin of the vector. The main point is that on an event-by-event basis, weights
+	                //       are stored in a tree, and so is the hard parton multiplicity for each event, but
+	                //       histograms, to be normalized from tree, will only be filled in the reader.
 	  
-	            int ibin = njetCounter*numOfWeights + iWeight;
-	            sumOfWeights[ibin]  += w;
+	                int ibin = njetCounter*numOfWeights + iWeight;
+	                sumOfWeights[ibin]  += w; 
+	  
+  	              // Store event weights in a vector
+  	              // .  .  .  .  .  .  .  .  .  .  .
+	  
+	                EvtWeights.push_back(w);
+	              }
+	  
+	            if (nullweight) continue;
 
-	  
-  	          // Store event weights in a vector
-  	          // .  .  .  .  .  .  .  .  .  .  .
-	  
-	            EvtWeights.push_back(w);
-	          }
-	  
-	        if (nullweight) continue;
-	      
+               
 
-	  
-          // Perform the User-defined Analysis on Current Event
-          // --------------------------------------------------
+              // Perform the User-defined Analysis on Current Event
+              // --------------------------------------------------
 
-          // Declare an Analysis Utilities class object
-          // ..........................................
+              // Declare an Analysis Utilities class object
+              // ..........................................
 
-          // Note: To be able to access the functions define there
+              // Note: To be able to access the functions define there
     
-	        ANA_utils myUtilsMain;
+	            ANA_utils myUtilsMain;
 	  
-	        myUtilsMain.getPartonLevelEvent(pythia.event, partonLevelEvent);
+	            myUtilsMain.getPartonLevelEvent(pythia.event, partonLevelEvent);
+
+              
+
+              // Run the analysis
+              // ................
+                
+              int i_HardJet = -999;
+	            myAnalysis.analyze(pythia.event, partonLevelEvent, EvtWeights, i_HardJet);
+                
+	            
 
 
-
-          // Run the analysis
-          // ................
       
-	        myAnalysis.analyze(pythia.event, partonLevelEvent, EvtWeights, i_HardJet);
+              // Produce HepMC output
+              // --------------------
+
+              // Construct new empty HepMC event
+              // ...............................
+
+              // Note: Units will be as chosen for HepMC build, but can be changed by
+              //       arguments, e.g. GenEvt( HepMC::Units::GEV, HepMC::Units::MM)
+              
+	            HepMC::GenEvent* hepmcevt = new HepMC::GenEvent();
+               
+
+      
+              // Add the weight of the current event to the cross section
+              // ........................................................
+
+	            // Note: sigmaTemp is to store the cross section for each hard parton multiplicity, while
+	            //       sigmaTotal store cross section for the sum of all processes after merging.
+	            sigmaTotal += EvtWeights[0]*normhepmc;
+	            sigmaTemp  += EvtWeights[0]*normhepmc;
+	            errorTotal += pow2(EvtWeights[0]*normhepmc);
+
+              // Calculate the right event weight to give to HepMC and fill the event
+              // ....................................................................
+
+              // Note: Events in MEPS come with weights to include effects of Sudakov resummation,
+              //       a_s and PDF running.  For a merged prediction all events need to have the correct
+              //       relative weight, consisting of the accepted cross section, and the “merging
+              //       weight” of the current event.
+              //       
+              
+	            hepmcevt->weights().push_back(EvtWeights[0]*normhepmc);
+              
+	            ToHepMC.fill_next_event( pythia, hepmcevt );
+
+              EvtWeights.clear();
+              
+              // Report cross section to hepmc
+              // .............................
+      
+	            HepMC::GenCrossSection xsec;
+	            xsec.set_cross_section( sigmaTotal*1e9, pythia.info.sigmaErr()*1e9 );
+	            hepmcevt->set_cross_section( xsec );
+      
+
+              // Write the HepMC event to file. Done with it
+              // ...........................................
+
+	            ascii_io << hepmcevt;
+	            delete hepmcevt;
+            } // end event loop for matching
+        }
+      // BSJ: MLM ^^  
+      else if ( doCKKWMerging )
+        {
+          // Generate event loop
+          //	...................
+
+          for (int iEvent = 0; iEvent < nEvent; ++iEvent)
+	          {
+	            if (!pythia.next())
+	              {
+	                if (!(isLHEinput)) continue;
+	                else
+		                {
+		                  if( pythia.info.atEndOfFile() )
+		                    {
+		                      break;
+		                    }
+		                  else continue;
+		                }
+	              }
 	  
-	        EvtWeights.clear();
-
-
-      
-          // Produce HepMC output
-          // --------------------
-
-          // Construct new empty HepMC event
-          // ...............................
-
-          // Note: Units will be as chosen for HepMC build, but can be changed by
-          //       arguments, e.g. GenEvt( HepMC::Units::GEV, HepMC::Units::MM)
-
-	        HepMC::GenEvent* hepmcevt = new HepMC::GenEvent();
-
-
-      
-          // Add the weight of the current event to the cross section
-          // ........................................................
-
-	        // Note: sigmaTemp is to store the cross section for each hard parton multiplicity, while
-	        //       sigmaTotal store cross section for the sum of all processes after merging.
 	  
-	        sigmaTotal += EvtWeights[0]*normhepmc;
-	        sigmaTemp  += EvtWeights[0]*normhepmc;
-	        errorTotal += pow2(EvtWeights[0]*normhepmc);
+              // Display some event info
+              // .......................
+
+	            if (iEvent < nListEvts)
+	              {
+	                //pythia.event.list();
+	                //partonLevelEvent.list();
+	              }
+	  
+
+	  
+              // Check current jet multiplicity
+              // ..............................
+
+	            int i_HardJet = -999;
+	  
+	            if (doCKKWMerging) i_HardJet = pythia.mode("Main:subrun");
 
 
-          // Calculate the right event weight to give to HepMC and fill the event
-          // ....................................................................
 
-          // Note: Events in MEPS come with weights to include effects of Sudakov resummation,
-          //       a_s and PDF running.  For a merged prediction all events need to have the correct
-          //       relative weight, consisting of the accepted cross section, and the “merging
-          //       weight” of the current event.
-          //       
 
-	        hepmcevt->weights().push_back(EvtWeights[0]*normhepmc);
+              // Calculate Weights and Sum-of-Weights
+              // ------------------------------------
+      
+              // Get the Merging Weights
+              // .......................
 
-	        ToHepMC.fill_next_event( pythia, hepmcevt );
+              // Note: A merged calcula-tion is only a sophisticated reweighting procedure, which will
+              //       add effects of Sudakov resummation, and momentum-scale running of a_s and parton
+              //       distributions, to the ME calculation. This means that each event, after the merging
+              //       procedure, comes with a multiplicative weight to include these effects. These weights
+              //       should be used to reweight the events in an histogram (y-axis), and/or must be added
+              //       as a variable in a TTree in order to later reweight the histograms properly. They
+              //       must finally be also accounted for in cross section calculations.
 
       
+	            double MergeWeight = 1.;
+	            double NLOMergeWeight = 1.;
+
+	            MergeWeight = pythia.info.mergingWeight();
+	            NLOMergeWeight = pythia.info.mergingWeightNLO();
+
+
+
       
-          // Report cross section to hepmc
-          // .............................
+              // Fill Weight Vector and Calculate Sum-of-Weight
+              // ..............................................
+
+              // Note: The Event Weight must be multiplied by the Merge Weight
+
+	            
+	  
+	            for (int iWeight = 0; iWeight < numOfWeights; ++iWeight)
+	              {
+	      
+  	              // Get weight
+  	              // .  .  .  .
+
+	                double w = (pythia.info.weight(iWeight));
+	                w *=MergeWeight;
+
+	  
+  	              // Print a warning if a weight is negative or very large
+  	              // .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .
+	  
+	                if (w<0. || w>10.)
+		                {
+		                  std::cout << "Negative or very large weight for variation: " << names[iWeight] << std::endl;
+		                }
+	  
+	                // Skip the event if the weight is zero
+	                // .  .  .  .  .  .  .  .  .  .  .  .
+
+	                // Note: While large and/or negative weights sum up to a meaningful value, null weights will actually kill
+	                //       kill the event when weights are applied to histogram, and they create divergences in HepMC, so we
+	                //       remove them here.
+	      
+	                if (w==0.) nullweight = true;
+
+	      
+  	              // Add the weight of the current event to the Sum-of-Weights
+  	              // .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  
+
+	                // Note: In contrary to the cross section and the order at which they events are generated,
+	                //       the sumOfWeights vector has the baseline weight for the lowest jet multiplicty in
+	                //       the bin 0, and in last systematic weight for the highest jet multiplicity in the
+	                //       last bin of the vector. The main point is that on an event-by-event basis, weights
+	                //       are stored in a tree, and so is the hard parton multiplicity for each event, but
+	                //       histograms, to be normalized from tree, will only be filled in the reader.
+	  
+	                int ibin = njetCounter*numOfWeights + iWeight;
+	                sumOfWeights[ibin]  += w;
+
+	  
+  	              // Store event weights in a vector
+  	              // .  .  .  .  .  .  .  .  .  .  .
+	  
+	                EvtWeights.push_back(w);
+	              }
+	  
+	            if (nullweight) continue;
+	      
+
+	  
+              // Perform the User-defined Analysis on Current Event
+              // --------------------------------------------------
+
+              // Declare an Analysis Utilities class object
+              // ..........................................
+
+              // Note: To be able to access the functions define there
+    
+	            ANA_utils myUtilsMain;
+	  
+	            myUtilsMain.getPartonLevelEvent(pythia.event, partonLevelEvent);
+
+
+
+              // Run the analysis
+              // ................
       
-	        HepMC::GenCrossSection xsec;
-	        xsec.set_cross_section( sigmaTotal*1e9, pythia.info.sigmaErr()*1e9 );
-	        hepmcevt->set_cross_section( xsec );
+	            myAnalysis.analyze(pythia.event, partonLevelEvent, EvtWeights, i_HardJet);
+	  
+	            
+
+
+      
+              // Produce HepMC output
+              // --------------------
+
+              // Construct new empty HepMC event
+              // ...............................
+
+              // Note: Units will be as chosen for HepMC build, but can be changed by
+              //       arguments, e.g. GenEvt( HepMC::Units::GEV, HepMC::Units::MM)
+
+	            HepMC::GenEvent* hepmcevt = new HepMC::GenEvent();
+
+
+      
+              // Add the weight of the current event to the cross section
+              // ........................................................
+
+	            // Note: sigmaTemp is to store the cross section for each hard parton multiplicity, while
+	            //       sigmaTotal store cross section for the sum of all processes after merging.
+	  
+	            sigmaTotal += EvtWeights[0]*normhepmc;
+	            sigmaTemp  += EvtWeights[0]*normhepmc;
+	            errorTotal += pow2(EvtWeights[0]*normhepmc);
+
+
+              // Calculate the right event weight to give to HepMC and fill the event
+              // ....................................................................
+
+              // Note: Events in MEPS come with weights to include effects of Sudakov resummation,
+              //       a_s and PDF running.  For a merged prediction all events need to have the correct
+              //       relative weight, consisting of the accepted cross section, and the “merging
+              //       weight” of the current event.
+              //       
+
+	            hepmcevt->weights().push_back(EvtWeights[0]*normhepmc);
+
+	            ToHepMC.fill_next_event( pythia, hepmcevt );
+
+              EvtWeights.clear();
+      
+              // Report cross section to hepmc
+              // .............................
+      
+	            HepMC::GenCrossSection xsec;
+	            xsec.set_cross_section( sigmaTotal*1e9, pythia.info.sigmaErr()*1e9 );
+	            hepmcevt->set_cross_section( xsec );
       
 
-          // Write the HepMC event to file. Done with it
-          // ...........................................
+              // Write the HepMC event to file. Done with it
+              // ...........................................
 
-	        ascii_io << hepmcevt;
-	        delete hepmcevt;
-
-
-     	  } // end loop over events to generate
+	            ascii_io << hepmcevt;
+	            delete hepmcevt;
 
 
+     	      } // end loop over events to generate
+          } // end Merging loop
+        else if ( doUMEPSMerging )
+          {
+            // Start event-generation loop.
+            for (int iEvent=0; iEvent<nEvent; ++iEvent) 
+              {
+
+                // Generate next event
+                if (!pythia.next()) 
+                  {
+                    if (pythia.info.atEndOfFile()) break;
+                    else continue;
+                  }
+
+                // Get event weight(s).
+                double weight        = pythia.info.weight();
+                double weightMerging = pythia.info.mergingWeight();
+                weight *= weightMerging;
+                // Swap sign for counter events (only in UMEPS and UNLOPS).
+                weight *= -1.;
+
+                // Do nothing for vanishing event weight.
+                if (weight == 0.) continue;
+
+                // Add to current exclusive cross section.
+                sigmaNow += weight;
+                errorNow += pow2(weight);
+
+                // Find the final copy of the W+, which is after the full shower.
+                int iW = 0;
+                for (int i = 1; i < pythia.event.size(); ++i)
+                  if (pythia.event[i].id() == 24) iW = i;
+                  // Fill the pTW histogram, including merging weight.
+                  double pTW = pythia.event[iW].pT();
+                  pTWnow.fill(pTW, weight);
+
+
+
+                ANA_utils myUtilsMain;
+	  
+	              myUtilsMain.getPartonLevelEvent(pythia.event, partonLevelEvent);
+
+                // Run the analysis
+                // ................
+                int i_HardJet = -999;  
+
+	              myAnalysis.analyze(pythia.event, partonLevelEvent, EvtWeights, i_HardJet);
+
+                // Produce HepMC output
+                // --------------------
+
+                // Construct new empty HepMC event
+                // ...............................
+
+                // Note: Units will be as chosen for HepMC build, but can be changed by
+                //       arguments, e.g. GenEvt( HepMC::Units::GEV, HepMC::Units::MM)
+
+	              HepMC::GenEvent* hepmcevt = new HepMC::GenEvent();
+
+              } 
+          }  
+      
 
       // Pythia Statistics display
       // -------------------------
@@ -2085,6 +2351,29 @@ int main(int argc, char* argv[])
       sampleXStree.push_back(sigmaTemp);
       sigmaTemp = 0.;
       
+      if (doUMEPSMerging) 
+        {
+          // Calculate event normalisation, depending on whether events have
+          // unit weight (LHA strategy < 4) or come weighted (LHA strategy 4).
+          double norm = 1. / pythia.info.nSelected();
+          if (abs(pythia.info.lhaStrategy()) != 4) norm *= sigmaInc;
+
+          // Normalise current cross section and add to total cross section.
+          sigmaNow   *= norm;
+          errorNow   *= pow2(norm);
+          sigmaTotal += sigmaNow;
+          errorTotal += errorNow;
+
+          // Save sample cross section for output.
+          //if (isTree) sigmaExcTree.push_back(sigmaNow);
+          //if (isLoop) sigmaExcLoop.push_back(sigmaNow);
+          sigmaExcTreeSubt.push_back(sigmaNow);
+          //if (isLoopSubt) sigmaExcLoopSubt.push_back(sigmaNow);
+
+          // Normalise histograms and add to the combined ones.
+          pTWnow *= MB2PB * norm / binWidth;
+          pTWsum += pTWnow;
+        }
 
       // Restart with ME of a reduced the number of jets
       // -----------------------------------------------
@@ -2095,6 +2384,59 @@ int main(int argc, char* argv[])
 	      break;
       
     } //end while loop
+
+    if (doUMEPSMerging)
+      {
+        // Print combined pTW histogram to file.
+  pTWsum.table("pTWsum.dat");
+
+  // Print cross section information.
+  cout << endl << endl;
+  cout << " *-------  MEPS Cross Sections  ---------------------*" << endl;
+  cout << " |                                                   |" << endl;
+  if (sigmaExcTree.size() > 0) {
+    cout << " | Exclusive LO cross sections (mb):                 |" << endl;
+    for (int i(0); i<int(sigmaExcTree.size()); ++i)
+      cout << " |     " << sigmaExcTree.size()-i-1 << "-jet:  "
+           << setw(17) << scientific << setprecision(6)
+           << sigmaExcTree[i] << "                     |" << endl;
+    cout << " |                                                   |" << endl;
+  }
+  if (sigmaExcLoop.size() > 0) {
+    cout << " | Exclusive NLO cross sections (mb):                |" << endl;
+    for (int i(0); i<int(sigmaExcLoop.size()); ++i)
+      cout << " |     " << sigmaExcLoop.size()-i-1 << "-jet:  "
+           << setw(17) << scientific << setprecision(6)
+           << sigmaExcLoop[i] << "                     |" << endl;
+    cout << " |                                                   |" << endl;
+  }
+  if (sigmaExcTreeSubt.size() > 0) {
+    cout << " | Exclusive LO subtractive cross sections (mb):     |" << endl;
+    for (int i(0); i<int(sigmaExcTreeSubt.size()); ++i)
+      cout << " |     " << sigmaExcTreeSubt.size()-i << "-jet:  "
+           << setw(17) << scientific << setprecision(6)
+           << sigmaExcTreeSubt[i] << "                     |" << endl;
+    cout << " |                                                   |" << endl;
+  }
+  if (sigmaExcLoopSubt.size() > 0) {
+    cout << " | Exclusive NLO subtractive cross sections (mb):    |" << endl;
+    for (int i(0); i<int(sigmaExcLoopSubt.size()); ++i)
+      cout << " |     " << sigmaExcLoopSubt.size()-i << "-jet:  "
+           << setw(17) << scientific << setprecision(6)
+           << sigmaExcLoopSubt[i] << "                     |" << endl;
+    cout << " |                                                   |" << endl;
+  }
+  cout << " |---------------------------------------------------|" << endl;
+  cout << " |                                                   |" << endl;
+  cout << " | Inclusive merged cross section:                   |" << endl;
+  cout << " |                                                   |" << endl;
+  cout << " |     " << setw(10) << scientific << setprecision(6)
+       << sigmaTotal << " +- " << setw(10) << sqrt(errorTotal) << " mb "
+       << "              |" << endl;
+  cout << " |                                                   |" << endl;
+  cout << " *-------  End MEPS Cross Sections  -----------------*" << endl;
+  cout << endl << endl;
+      }
 
 
 
@@ -2155,7 +2497,6 @@ int main(int argc, char* argv[])
     }
   
     
-
   // Write info to file
   // ------------------
 
